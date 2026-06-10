@@ -203,6 +203,88 @@ def make_heatmap(z_df, zrange, show_text, width, height):
     return fig
 
 
+def render_performance_chart(close):
+    """タスクB: カテゴリ別相対パフォーマンス折れ線(起点=100)を表示する。"""
+    st.subheader("カテゴリ別相対パフォーマンス")
+
+    # 期間切替(選択はsession_stateに保持し、タスクCでも同じ期間を使う)
+    period_label = st.radio(
+        "期間", ["1ヶ月", "3ヶ月", "6ヶ月", "1年"], horizontal=True,
+        key="perf_period", index=1, label_visibility="collapsed",
+    )
+    months = {"1ヶ月": 1, "3ヶ月": 3, "6ヶ月": 6, "1年": 12}[period_label]
+    start = pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+
+    # 日次リターン(符号統一済み)を期間でスライスする
+    returns = compute_returns(close, "D")
+    period = returns[returns.index >= start].dropna(how="all")
+    if period.empty:
+        st.warning("この期間のデータがありません。")
+        return
+
+    # 基準日 = 全資産共通の直前営業日(リターン表の日付インデックスは
+    # 全29資産の取引日の和集合なので、期間開始前の最後の日付を使う)。
+    # データ先頭より前に営業日が無い場合のみ、期間初日の1営業日前で代用する
+    before = returns.index[returns.index < period.index[0]]
+    if len(before) > 0:
+        base_date = before[-1]
+    else:
+        base_date = period.index[0] - pd.tseries.offsets.BDay(1)
+
+    categories = []
+    for category, _, _ in ASSETS:
+        if category not in categories:
+            categories.append(category)
+
+    # 表示対象の選択(全体=カテゴリ平均5本 / カテゴリ名=個別資産の線)
+    target = st.selectbox("表示対象", ["全体(カテゴリ平均)"] + categories,
+                          key="perf_target")
+
+    def to_cumulative(daily_return):
+        """日次リターン(%)系列を累積し、先頭に基準日(=100)の点を付けて返す。"""
+        cumulative = (1 + daily_return.fillna(0) / 100).cumprod() * 100
+        base_point = pd.Series([100.0], index=[base_date])
+        return pd.concat([base_point, cumulative])
+
+    # (表示名, 日次リターン系列) のリストを作る
+    lines = []
+    if target == "全体(カテゴリ平均)":
+        for category in categories:
+            tickers = [t for c, t, _ in ASSETS
+                       if c == category and t in period.columns]
+            # 欠損(休場日)は0%として扱い、取引のあった資産の平均で代表させる
+            lines.append((category, period[tickers].mean(axis=1, skipna=True)))
+    else:
+        for category, ticker, name in ASSETS:
+            if category == target and ticker in period.columns:
+                lines.append((name, period[ticker]))
+
+    fig = go.Figure()
+    for name, daily_return in lines:
+        cumulative = to_cumulative(daily_return)
+        fig.add_trace(go.Scatter(
+            x=cumulative.index, y=cumulative.values,
+            mode="lines", name=name,
+            hovertemplate="%{x|%Y/%m/%d}<br>" + name
+                          + ": %{y:.1f}<extra></extra>",
+        ))
+
+    fig.add_hline(y=100, line_dash="dot", line_color="gray", opacity=0.5)
+    fig.update_layout(
+        height=380,
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        yaxis=dict(title="起点=100"),
+    )
+    if target == "全体(カテゴリ平均)":
+        st.caption(f"表示期間: 直近{period_label}"
+                   f"(カテゴリ内平均リターンの累積、起点=100)")
+    else:
+        st.caption(f"表示期間: 直近{period_label}({target}の個別資産、起点=100)"
+                   " ※凡例をタップすると線の表示/非表示を切り替えられます")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+
 def render_timeseries_tab():
     """「時系列」タブ: 日次/週次切替付きヒートマップを表示する。"""
     with st.spinner("データ取得中(初回は時間がかかります)..."):
@@ -296,6 +378,10 @@ def render_timeseries_tab():
             fig = make_heatmap(period, zrange=5, show_text=True,
                                width=760, height=620)
             st.plotly_chart(fig, use_container_width=False, config=PLOTLY_CONFIG)
+
+    # --- タスクB: カテゴリ別相対パフォーマンス ---
+    st.divider()
+    render_performance_chart(close)
 
     # --- 注記 ---
     st.caption(
