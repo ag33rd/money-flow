@@ -1,0 +1,10 @@
+# Python キャッシュ
+__pycache__/
+*.pyc
+
+# Streamlit ローカル設定(秘密情報が入る可能性があるため除外)
+.streamlit/secrets.toml
+
+# ローカル専用ファイル(公開リポジトリに含めない)
+CLAUDE.md
+*.bat
