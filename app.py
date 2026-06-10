@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""世界マネーフロー可視化アプリ ステップ2: Streamlitダッシュボード
+"""世界マネーフロー可視化アプリ
 
-yfinance で監視対象ティッカーの最新値と前日比を取得し、
-カテゴリ別にカード形式(st.metric)で表示する。
-スマホ閲覧前提のため、2カラムのシンプルなレイアウトとする。
+タブ1「本日」: 主要12指標の最新値・前日比をカード表示(ステップ2)
+タブ2「時系列」: 29資産の時系列ヒートマップ(ステップ5 タスクA)
 """
 
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-# 監視対象ティッカー(カテゴリ, ティッカー, 表示名)※ステップ1と同じ
+# ---------------------------------------------------------------
+# タブ1「本日」用: 監視対象ティッカー(カテゴリ, ティッカー, 表示名)
+# ---------------------------------------------------------------
 TICKERS = [
     ("株価指数", "^GSPC", "S&P500(米)"),
     ("株価指数", "^IXIC", "NASDAQ(米)"),
@@ -25,7 +28,48 @@ TICKERS = [
     ("暗号資産・金", "GC=F", "金先物(USD)"),
 ]
 
+# ---------------------------------------------------------------
+# タブ2「時系列」用: 確定29資産(カテゴリ, ティッカー, 表示名)
+# ---------------------------------------------------------------
+ASSETS = [
+    ("株式", "^GSPC", "米国株"),
+    ("株式", "^N225", "日本株"),
+    ("株式", "^KS11", "韓国株"),
+    ("株式", "^HSI", "香港株"),
+    ("株式", "^TWII", "台湾株"),
+    ("株式", "EEM", "新興国株"),
+    ("株式", "^GDAXI", "ドイツ株"),
+    ("株式", "^FCHI", "フランス株"),
+    ("株式", "^FTSE", "イギリス株"),
+    ("通貨", "DX-Y.NYB", "ドル"),
+    ("通貨", "JPY=X", "円"),
+    ("通貨", "CNY=X", "人民元"),
+    ("通貨", "EURUSD=X", "ユーロ"),
+    ("通貨", "GBPUSD=X", "ポンド"),
+    ("暗号資産", "BTC-USD", "BTC"),
+    ("暗号資産", "ETH-USD", "ETH"),
+    ("コモディティ", "GC=F", "金"),
+    ("コモディティ", "SI=F", "銀"),
+    ("コモディティ", "HG=F", "銅"),
+    ("コモディティ", "CL=F", "原油"),
+    ("コモディティ", "NG=F", "天然ガス"),
+    ("コモディティ", "ZW=F", "小麦"),
+    ("コモディティ", "ZS=F", "大豆"),
+    ("コモディティ", "ZC=F", "とうもろこし"),
+    ("国債", "IEF", "米国債"),
+    ("国債", "2510.T", "日本国債"),
+    ("国債", "IGLT.L", "イギリス国債"),
+    ("国債", "CBON", "中国国債"),
+    ("国債", "IEGA.AS", "ユーロ圏国債"),
+]
 
+# 符号反転対象: USD/XXX形式の通貨(上昇=その通貨から資金流出のため)
+INVERT_TICKERS = {"JPY=X", "CNY=X"}
+
+
+# ===============================================================
+# タブ1「本日」のロジック(ステップ2と同じ)
+# ===============================================================
 @st.cache_data(ttl=600)
 def fetch_quote(ticker):
     """指定ティッカーの最新終値と前日比(%)を取得する。
@@ -34,32 +78,27 @@ def fetch_quote(ticker):
     戻り値: (最新値, 前日比%) のタプル。取得失敗時は (None, None)。
     """
     try:
-        # 直近5日分の日足を取得(休場日があっても2営業日分を確保するため)
         data = yf.Ticker(ticker).history(period="5d")
         close = data["Close"].dropna()
         if len(close) < 2:
             return None, None
-        latest = float(close.iloc[-1])    # 最新値
-        previous = float(close.iloc[-2])  # 前日値
-        change_pct = (latest - previous) / previous * 100  # 前日比(%)
+        latest = float(close.iloc[-1])
+        previous = float(close.iloc[-2])
+        change_pct = (latest - previous) / previous * 100
         return latest, change_pct
     except Exception:
-        # 通信エラーやティッカー不正は「取得失敗」として表示側で処理する
         return None, None
 
 
-def main():
-    """ダッシュボード本体。カテゴリ別に2カラムでメトリクスを表示する。"""
-    st.set_page_config(page_title="世界マネーフロー", page_icon="🌏", layout="centered")
-    st.title("🌏 世界マネーフロー モニター")
+def render_today_tab():
+    """「本日」タブ: カテゴリ別に2カラムでメトリクスを表示する。"""
     st.caption("データ: yfinance(株・指数は15〜20分遅延、暗号資産はほぼリアルタイム)")
 
     current_category = None
     columns = None
-    position = 0  # カテゴリ内の表示位置(2カラム振り分け用)
+    position = 0
 
     for category, ticker, name in TICKERS:
-        # カテゴリが変わったら見出しと新しい2カラムを作る
         if category != current_category:
             st.subheader(category)
             columns = st.columns(2)
@@ -78,10 +117,208 @@ def main():
                 )
         position += 1
 
-    # 手動更新ボタン(キャッシュを破棄して再取得する)
     if st.button("🔄 最新データに更新"):
         fetch_quote.clear()
         st.rerun()
+
+
+# ===============================================================
+# タブ2「時系列」のロジック(ステップ5 タスクA)
+# ===============================================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_history():
+    """29資産の過去3年の日次終値を一括取得する(1時間キャッシュ)。
+
+    戻り値: 列=ティッカー、行=日付 の終値DataFrame。
+    """
+    tickers = [t for _, t, _ in ASSETS]
+    data = yf.download(tickers, period="3y", interval="1d", progress=False)
+    close = data["Close"]
+    # ASSETSの定義順に列を並べる(取得できなかった列は除外される)
+    close = close[[t for t in tickers if t in close.columns]]
+    return close
+
+
+def compute_returns(close, freq):
+    """終値からリターン(%)を計算する。
+
+    freq="D": 日次リターン。freq="W": 週次リターン(各週の最終取引日終値ベース)。
+    週末(土日)の行は除外する。暗号資産の土日の値動きは月曜のリターンに合算される。
+    符号は「買われる=プラス」に統一(INVERT_TICKERSは反転)。
+    """
+    # 営業日(月〜金)のみ残す
+    weekday = close[close.index.dayofweek < 5]
+    if freq == "D":
+        returns = weekday.pct_change() * 100
+    else:
+        # 週次: 金曜締めで各週の最終値を取り、週次変化率を計算する
+        weekly_close = weekday.resample("W-FRI").last()
+        returns = weekly_close.pct_change() * 100
+    # 符号反転(USD/XXX形式の通貨)
+    for ticker in INVERT_TICKERS:
+        if ticker in returns.columns:
+            returns[ticker] = -returns[ticker]
+    return returns
+
+
+def make_heatmap(z_df, zrange, show_text, width, height):
+    """リターンDataFrame(行=日付/週, 列=ティッカー)からヒートマップを作る。
+
+    欠損(NaN)セルは描画されず、背景色(グレー)が見える。
+    """
+    tickers = [t for _, t, _ in ASSETS]
+    names = [n for _, _, n in ASSETS]
+    # 行=資産、列=日付 に転置し、資産はASSETSの定義順に並べる
+    z = z_df[[t for t in tickers if t in z_df.columns]].T.values
+    x_labels = [d.strftime("%m/%d") for d in z_df.index]
+
+    heatmap = go.Heatmap(
+        z=z,
+        x=x_labels,
+        y=names,
+        colorscale="RdYlGn",
+        zmid=0,
+        zmin=-zrange,
+        zmax=zrange,
+        colorbar=dict(title="%", thickness=12),
+        hovertemplate="%{y}<br>%{x}<br>%{z:.2f}%<extra></extra>",
+        hoverongaps=False,
+    )
+    if show_text:
+        heatmap.texttemplate = "%{z:.1f}"
+        heatmap.textfont = dict(size=9)
+
+    fig = go.Figure(heatmap)
+    fig.update_layout(
+        width=width,
+        height=height,
+        margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor="#cccccc",  # 欠損セルはこの背景色(グレー)で見える
+        yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
+        xaxis=dict(tickfont=dict(size=10)),
+    )
+    return fig
+
+
+def render_timeseries_tab():
+    """「時系列」タブ: 日次/週次切替付きヒートマップを表示する。"""
+    with st.spinner("データ取得中(初回は時間がかかります)..."):
+        close = fetch_history()
+
+    if close.empty:
+        st.error("データを取得できませんでした。時間をおいて再読み込みしてください。")
+        return
+
+    st.subheader("資産別リターン ヒートマップ")
+
+    # --- 日次/週次の切替(選択状態はsession_stateで保持) ---
+    mode = st.radio(
+        "表示モード", ["日次", "週次"], horizontal=True, key="hm_mode",
+        label_visibility="collapsed",
+    )
+
+    if mode == "日次":
+        returns = compute_returns(close, "D")
+        # --- 週単位ナビゲーション(0=今週、1=先週、...) ---
+        if "day_week_offset" not in st.session_state:
+            st.session_state.day_week_offset = 0
+        offset = st.session_state.day_week_offset
+
+        today = pd.Timestamp.today().normalize()
+        # 今週の月曜日を起点とし、offset週ぶん過去へずらす
+        week_start = today - pd.Timedelta(days=today.dayofweek) \
+            - pd.Timedelta(weeks=offset)
+        week_end = week_start + pd.Timedelta(days=5)  # 月〜金の5営業日
+        data_start = returns.index.min()
+
+        # 前週がデータ範囲外ならボタンを無効化する
+        prev_disabled = (week_start <= data_start)
+        next_disabled = (offset == 0)
+
+        col1, col2, col3 = st.columns(3)
+        if col1.button("← 前週", disabled=prev_disabled):
+            st.session_state.day_week_offset += 1
+            st.rerun()
+        if col2.button("今週に戻る", disabled=next_disabled):
+            st.session_state.day_week_offset = 0
+            st.rerun()
+        if col3.button("翌週 →", disabled=next_disabled):
+            st.session_state.day_week_offset -= 1
+            st.rerun()
+
+        mask = (returns.index >= week_start) & (returns.index < week_end)
+        period = returns[mask]
+        label = (f"{week_start.strftime('%Y/%m/%d')} 〜 "
+                 f"{(week_end - pd.Timedelta(days=1)).strftime('%m/%d')}")
+        st.caption(f"表示期間: {label}(日次リターン%)")
+        if period.empty:
+            st.warning("この週のデータがありません。")
+        else:
+            fig = make_heatmap(period, zrange=3, show_text=True,
+                               width=600, height=620)
+            st.plotly_chart(fig, use_container_width=False)
+
+    else:
+        returns = compute_returns(close, "W")
+        returns = returns.dropna(how="all")
+        n_weeks = len(returns)
+        # --- 13週単位ナビゲーション(0=最新13週) ---
+        if "week_offset" not in st.session_state:
+            st.session_state.week_offset = 0
+        offset = st.session_state.week_offset
+
+        end = n_weeks - 13 * offset
+        start = max(0, end - 13)
+        prev_disabled = (start == 0)
+        next_disabled = (offset == 0)
+
+        col1, col2, col3 = st.columns(3)
+        if col1.button("← 前へ", disabled=prev_disabled):
+            st.session_state.week_offset += 1
+            st.rerun()
+        if col2.button("最新に戻る", disabled=next_disabled):
+            st.session_state.week_offset = 0
+            st.rerun()
+        if col3.button("次へ →", disabled=next_disabled):
+            st.session_state.week_offset -= 1
+            st.rerun()
+
+        period = returns.iloc[start:end]
+        if period.empty:
+            st.warning("この期間のデータがありません。")
+        else:
+            label = (f"{period.index[0].strftime('%Y/%m/%d')} 〜 "
+                     f"{period.index[-1].strftime('%Y/%m/%d')}")
+            st.caption(f"表示期間: {label}(週次リターン%・各週の最終取引日終値ベース)")
+            fig = make_heatmap(period, zrange=5, show_text=True,
+                               width=760, height=620)
+            st.plotly_chart(fig, use_container_width=False)
+
+    # --- 注記 ---
+    st.caption(
+        "※ 本表示は価格変動からの推定であり、実際の資金フロー統計"
+        "(ファンドフロー)ではありません。\n\n"
+        "※ 国債ETFは各国の現地通貨建て価格のリターンであり、"
+        "為替変動は含みません。\n\n"
+        "※ 週末は表示しません。暗号資産の土日の値動きは月曜のリターンに"
+        "合算されます。\n\n"
+        "※ グレーのセルは市場休日などでデータが無い日です。"
+    )
+
+
+# ===============================================================
+# ページ本体
+# ===============================================================
+def main():
+    """2タブ構成のダッシュボード本体。"""
+    st.set_page_config(page_title="世界マネーフロー", page_icon="🌏", layout="centered")
+    st.title("🌏 世界マネーフロー モニター")
+
+    tab_today, tab_series = st.tabs(["本日", "時系列"])
+    with tab_today:
+        render_today_tab()
+    with tab_series:
+        render_timeseries_tab()
 
 
 if __name__ == "__main__":
