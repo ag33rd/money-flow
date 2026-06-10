@@ -285,6 +285,55 @@ def render_performance_chart(close):
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
 
 
+def render_ranking_chart(close):
+    """タスクC: 期間リターンランキング横棒グラフを表示する。
+
+    期間はタスクB(カテゴリ別相対パフォーマンス)で選択中のものを共用する。
+    """
+    st.subheader("期間リターンランキング")
+
+    # タスクBの選択期間をsession_stateから参照する(未選択時は3ヶ月)
+    period_label = st.session_state.get("perf_period", "3ヶ月")
+    months = {"1ヶ月": 1, "3ヶ月": 3, "6ヶ月": 6, "1年": 12}[period_label]
+    start = pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+
+    returns = compute_returns(close, "D")
+    period = returns[returns.index >= start].dropna(how="all")
+    if period.empty:
+        st.warning("この期間のデータがありません。")
+        return
+
+    # 資産ごとに期間リターン(%)を累積計算する(符号統一済みリターンを使用)
+    results = []
+    for _, ticker, name in ASSETS:
+        if ticker not in period.columns:
+            continue
+        total = ((1 + period[ticker].fillna(0) / 100).prod() - 1) * 100
+        results.append((name, total))
+
+    # リターン降順に並べる(横棒は下から描画されるため昇順にして渡す)
+    results.sort(key=lambda x: x[1])
+    names = [r[0] for r in results]
+    values = [r[1] for r in results]
+    colors = ["#2ca02c" if v >= 0 else "#d62728" for v in values]  # 緑/赤
+
+    fig = go.Figure(go.Bar(
+        x=values, y=names, orientation="h",
+        marker_color=colors,
+        text=[f"{v:+.1f}%" for v in values],
+        textposition="outside",
+        hovertemplate="%{y}: %{x:+.2f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        height=700,
+        margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(title="期間リターン(%)"),
+        yaxis=dict(tickfont=dict(size=11)),
+    )
+    st.caption(f"表示期間: 直近{period_label}(全29資産、上=資金流入/下=資金流出)")
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+
 def render_timeseries_tab():
     """「時系列」タブ: 日次/週次切替付きヒートマップを表示する。"""
     with st.spinner("データ取得中(初回は時間がかかります)..."):
@@ -382,6 +431,10 @@ def render_timeseries_tab():
     # --- タスクB: カテゴリ別相対パフォーマンス ---
     st.divider()
     render_performance_chart(close)
+
+    # --- タスクC: 期間リターンランキング ---
+    st.divider()
+    render_ranking_chart(close)
 
     # --- 注記 ---
     st.caption(
