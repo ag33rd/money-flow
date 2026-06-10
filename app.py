@@ -66,6 +66,9 @@ ASSETS = [
 # 符号反転対象: USD/XXX形式の通貨(上昇=その通貨から資金流出のため)
 INVERT_TICKERS = {"JPY=X", "CNY=X"}
 
+# 時系列タブの全グラフ共通のplotly設定(モードバー非表示。タスクB・Cでも使う)
+PLOTLY_CONFIG = {"displayModeBar": False}
+
 
 # ===============================================================
 # タブ1「本日」のロジック(ステップ2と同じ)
@@ -256,7 +259,7 @@ def render_timeseries_tab():
         else:
             fig = make_heatmap(period, zrange=3, show_text=True,
                                width=600, height=620)
-            st.plotly_chart(fig, use_container_width=False)
+            st.plotly_chart(fig, use_container_width=False, config=PLOTLY_CONFIG)
 
     else:
         returns = compute_returns(close, "W")
@@ -292,7 +295,7 @@ def render_timeseries_tab():
             st.caption(f"表示期間: {label}(週次リターン%・各週の最終取引日終値ベース)")
             fig = make_heatmap(period, zrange=5, show_text=True,
                                width=760, height=620)
-            st.plotly_chart(fig, use_container_width=False)
+            st.plotly_chart(fig, use_container_width=False, config=PLOTLY_CONFIG)
 
     # --- 注記 ---
     st.caption(
