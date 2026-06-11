@@ -197,8 +197,9 @@ def make_heatmap(z_df, zrange, show_text, width, height):
         height=height,
         margin=dict(l=10, r=10, t=10, b=10),
         plot_bgcolor="#cccccc",  # 欠損セルはこの背景色(グレー)で見える
-        yaxis=dict(autorange="reversed", tickfont=dict(size=11)),
-        xaxis=dict(tickfont=dict(size=10)),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=11), fixedrange=True),
+        xaxis=dict(tickfont=dict(size=10), fixedrange=True),
+        dragmode=False,  # スマホでの拡大縮小・ドラッグを無効化
     )
     return fig
 
@@ -274,7 +275,9 @@ def render_performance_chart(close):
         height=380,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        yaxis=dict(title="起点=100"),
+        yaxis=dict(title="起点=100", fixedrange=True),
+        xaxis=dict(fixedrange=True),
+        dragmode=False,  # スマホでの拡大縮小・ドラッグを無効化
     )
     if target == "全体(カテゴリ平均)":
         st.caption(f"表示期間: 直近{period_label}"
@@ -327,8 +330,9 @@ def render_ranking_chart(close):
     fig.update_layout(
         height=700,
         margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(title="期間リターン(%)"),
-        yaxis=dict(tickfont=dict(size=11)),
+        xaxis=dict(title="期間リターン(%)", fixedrange=True),
+        yaxis=dict(tickfont=dict(size=11), fixedrange=True),
+        dragmode=False,  # スマホでの拡大縮小・ドラッグを無効化
     )
     st.caption(f"表示期間: 直近{period_label}(全29資産、上=資金流入/下=資金流出)")
     st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
