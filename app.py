@@ -63,7 +63,6 @@ WEIGHT_CRYPTO = 0.3   # 暗号資産(リスク資産・補助)
 WEIGHT_BOND   = 0.5   # 国債(安全資産。プラス=リスクオフ方向のため符号反転して加算)
 WEIGHT_GOLD   = 0.5   # 金(安全資産。同上)
 WEIGHT_DXY    = 0.3   # ドル指数(安全資産逃避。同上)
-WEIGHT_VIX    = 0.2   # VIX恐怖指数(上昇=リスクオフ。同上)
 
 
 # ===============================================================
@@ -71,16 +70,16 @@ WEIGHT_VIX    = 0.2   # VIX恐怖指数(上昇=リスクオフ。同上)
 # ===============================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_history():
-    """29資産 + VIX の過去3年の日次終値を一括取得する(1時間キャッシュ)。
+    """29資産 + ^TNX の過去3年の日次終値を一括取得する(1時間キャッシュ)。
 
-    ^VIX はスコア計算専用。ASSETSには含まれないが同じdownload呼び出しに
+    ^TNX はパフォーマンスグラフ専用。ASSETSには含まれないが同じdownload呼び出しに
     同梱することで追加の通信なしに取得する。
     戻り値: 列=ティッカー、行=日付 の終値DataFrame。
     """
-    tickers = [t for _, t, _ in ASSETS] + ["^VIX"]
+    tickers = [t for _, t, _ in ASSETS] + ["^TNX"]
     data = yf.download(tickers, period="3y", interval="1d", progress=False)
     close = data["Close"]
-    # ASSETSの定義順 + ^VIX で列を並べる(取得できなかった列は除外)
+    # ASSETSの定義順 + ^TNX で列を並べる(取得できなかった列は除外)
     ordered = [t for t in tickers if t in close.columns]
     return close[ordered]
 
@@ -127,10 +126,6 @@ def render_risk_meter(close):
     gold_ret   = avg(["GC=F"])
     dxy_ret    = avg(["DX-Y.NYB"])
 
-    # VIX: ^VIX は ASSETS 外だが fetch_history に同梱済み
-    vix_available = "^VIX" in latest.index and pd.notna(latest["^VIX"])
-    vix_ret = float(latest["^VIX"]) if vix_available else 0.0
-
     # 総合スコア計算(安全資産は符号反転して加算)
     score = (
         stock_avg   * WEIGHT_STOCK
@@ -138,7 +133,6 @@ def render_risk_meter(close):
         + bond_avg    * WEIGHT_BOND   * -1
         + gold_ret    * WEIGHT_GOLD   * -1
         + dxy_ret     * WEIGHT_DXY    * -1
-        + vix_ret     * WEIGHT_VIX    * -1
     )
     score = max(-3.0, min(3.0, score))  # 頭打ち処理
 
@@ -228,11 +222,6 @@ def render_risk_meter(close):
         ret = float(latest["DX-Y.NYB"])
         detail_rows.append(("ドル指数", "通貨", ret,
                              ret * WEIGHT_DXY * -1))
-    # VIX
-    vix_label = "VIX" if vix_available else "VIX(データなし)"
-    detail_rows.append((vix_label, "VIX", vix_ret,
-                         vix_ret * WEIGHT_VIX * -1))
-
     # 寄与度の大きい順に並べる(横棒は下から描画されるため昇順で渡す)
     detail_rows.sort(key=lambda x: x[3])
     d_names   = [r[0] for r in detail_rows]
@@ -272,10 +261,6 @@ def render_risk_meter(close):
                "タップで詳細(前日比・寄与度)")
     st.plotly_chart(fig_bar, use_container_width=True, config=PLOTLY_CONFIG)
 
-    # VIX データなしの場合の注記
-    if not vix_available:
-        st.caption("※ VIX: データなし(0扱い)")
-
     # スコアの基準日を表示
     if not returns.empty:
         st.caption(f"基準: {returns.index[-1].strftime('%Y/%m/%d')} の前日比リターン")
@@ -291,7 +276,6 @@ def make_heatmap(z_df, zrange, show_text, width, height):
     """リターンDataFrame(行=日付/週, 列=ティッカー)からヒートマップを作る。
 
     欠損(NaN)セルは描画されず、背景色(グレー)が見える。
-    ^VIX 列は ASSETS に含まれないため自動的に除外される。
     """
     tickers = [t for _, t, _ in ASSETS]
     names   = [n for _, _, n in ASSETS]
@@ -452,12 +436,20 @@ def render_performance_chart(close):
             if category == target and ticker in period.columns:
                 lines.append((name, period[ticker]))
 
+    # すべての表示対象に共通で米10年債利回りを追加する
+    # ^TNX は利回り(%水準)。pct_changeで「利回り自体の変化率」を累積し起点=100で表示
+    tnx_available = "^TNX" in period.columns
+    if tnx_available:
+        lines.append(("米10年債利回り", period["^TNX"]))
+
     fig = go.Figure()
     for name, daily_return in lines:
         cumulative = to_cumulative(daily_return)
+        # 米10年債利回りは破線で区別する
+        line_style = dict(dash="dash") if name == "米10年債利回り" else {}
         fig.add_trace(go.Scatter(
             x=cumulative.index, y=cumulative.values,
-            mode="lines", name=name,
+            mode="lines", name=name, line=line_style,
             hovertemplate="%{x|%Y/%m/%d}<br>" + name + ": %{y:.1f}<extra></extra>",
         ))
 
