@@ -461,13 +461,25 @@ def render_performance_chart(close):
             hovertemplate="%{x|%Y/%m/%d}<br>" + name + ": %{y:.1f}<extra></extra>",
         ))
 
+    # x軸の月名を日本語で設定(plotlyのデフォルトは英語)
+    # 月初日のtickvalを生成し、1月のみ「yyyy年m月」、それ以外は「m月」と表示
+    tick_start = (base_date + pd.offsets.MonthBegin(1))
+    tick_end   = period.index[-1] if not period.empty else pd.Timestamp.today()
+    tick_vals  = pd.date_range(start=tick_start, end=tick_end, freq="MS")
+    tick_text  = [
+        f"{d.year}年{d.month}月" if d.month == 1 else f"{d.month}月"
+        for d in tick_vals
+    ]
+
     fig.add_hline(y=100, line_dash="dot", line_color="gray", opacity=0.5)
     fig.update_layout(
         height=380,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         yaxis=dict(title="起点=100", fixedrange=True),
-        xaxis=dict(fixedrange=True),
+        xaxis=dict(
+            tickvals=tick_vals, ticktext=tick_text, fixedrange=True,
+        ),
         dragmode=False,
     )
     if target == "全体(カテゴリ平均)":
